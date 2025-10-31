@@ -133,7 +133,7 @@ Jump straight into character with your greeting - be theatrical and fun!`
 
     // Send images to GPT-4 Vision
     const visionResponse = await openai.chat.completions.create({
-      model: "gpt-5-nano",
+      model: "gpt-4o",
       messages: [
         {
           role: "user",

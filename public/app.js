@@ -5,8 +5,8 @@ let lastMotionTime = 0;
 let isProcessing = false;
 let motionCheckInterval = null;
 let isCalibrating = false;
-let motionStartTime = 0;
-let motionStabilized = false;
+let consecutiveStillFrames = 0;
+let motionWasDetected = false;
 
 // DOM elements
 const video = document.getElementById('video');
@@ -484,48 +484,40 @@ function checkForMotion() {
 
   // Skip motion detection entirely while processing
   if (isProcessing) {
+    consecutiveStillFrames = 0;
+    motionWasDetected = false;
     return;
   }
 
-  // Normal operation - check if motion exceeds threshold and cooldown has passed
+  // Check cooldown
   const now = Date.now();
   const timeSinceLastMotion = (now - lastMotionTime) / 1000;
+  if (timeSinceLastMotion < cooldownSeconds) {
+    return;
+  }
   
-  // Motion detection with stabilization
-  if (motion > motionThreshold && timeSinceLastMotion > cooldownSeconds) {
+  // Simple motion settling logic
+  if (motion > motionThreshold) {
+    // Motion detected
+    motionWasDetected = true;
+    consecutiveStillFrames = 0;
     
-    // If this is new motion, start tracking it
-    if (motionStartTime === 0) {
-      motionStartTime = now;
-      motionStabilized = false;
-      log(`Motion detected: ${motion.toFixed(1)}% - waiting for subject to settle...`);
+    if (!isCalibrating) {
+      log(`Motion detected: ${motion.toFixed(1)}% - tracking...`);
     }
     
-    // Check if motion has been present for 1-2 seconds (subject is likely stopped/settled)
-    const motionDuration = (now - motionStartTime) / 1000;
+  } else if (motionWasDetected && motion <= motionThreshold) {
+    // Motion stopped - count still frames
+    consecutiveStillFrames++;
     
-    // Wait 1.5 seconds of continuous motion, then capture when motion drops (subject stopped)
-    if (motionDuration > 1.5 && !motionStabilized) {
-      motionStabilized = true;
-    }
-    
-  } else if (motionStabilized && motion <= motionThreshold) {
-    // Motion dropped below threshold after being stable - subject has stopped moving!
-    log(`Subject stopped moving. Capturing clear images...`);
-    lastMotionTime = now;
-    motionStartTime = 0;
-    motionStabilized = false;
-    
-    // Wait a tiny bit more for any settling, then capture
-    setTimeout(() => {
+    // After 3 consecutive still frames (~1.5 seconds), capture
+    if (consecutiveStillFrames >= 3) {
+      log(`Subject settled after ${consecutiveStillFrames} still frames. Capturing...`);
+      motionWasDetected = false;
+      consecutiveStillFrames = 0;
+      lastMotionTime = now;
+      
       sendGreeting();
-    }, 300);
-    
-  } else if (motion <= motionThreshold) {
-    // Reset if motion dropped before stabilization
-    if (motionStartTime !== 0) {
-      motionStartTime = 0;
-      motionStabilized = false;
     }
   }
 }
@@ -544,10 +536,27 @@ async function start() {
   stopBtn.disabled = false;
   testBtn.disabled = true;
 
+  updateStatus('Warming up motion detection...');
+  
+  // Initialize the previous frame buffer by running detection a few times
+  // This prevents false positives on startup
+  await new Promise(resolve => {
+    let warmupCount = 0;
+    const warmupInterval = setInterval(() => {
+      detectMotion(); // Just run it, ignore result
+      warmupCount++;
+      if (warmupCount >= 5) { // 5 frames to establish baseline
+        clearInterval(warmupInterval);
+        resolve();
+      }
+    }, 200);
+  });
+
   // Start checking for motion every 500ms
   motionCheckInterval = setInterval(checkForMotion, 500);
 
   updateStatus('Watching for trick-or-treaters...');
+  log('Motion detection ready - baseline established');
 }
 
 // Stop monitoring
