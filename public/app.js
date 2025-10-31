@@ -1,0 +1,400 @@
+// State
+let stream = null;
+let isRunning = false;
+let lastMotionTime = 0;
+let isProcessing = false;
+let motionCheckInterval = null;
+
+// DOM elements
+const video = document.getElementById('video');
+const canvas = document.getElementById('canvas');
+const previousCanvas = document.getElementById('previousCanvas');
+const ctx = canvas.getContext('2d');
+const previousCtx = previousCanvas.getContext('2d');
+const statusDiv = document.getElementById('status');
+const startBtn = document.getElementById('startBtn');
+const stopBtn = document.getElementById('stopBtn');
+const testBtn = document.getElementById('testBtn');
+const sensitivitySlider = document.getElementById('sensitivity');
+const sensitivityValue = document.getElementById('sensitivityValue');
+const cooldownInput = document.getElementById('cooldown');
+const showVideoCheckbox = document.getElementById('showVideo');
+const showDebugCheckbox = document.getElementById('showDebug');
+const debugSection = document.getElementById('debugSection');
+const capturedImage = document.getElementById('capturedImage');
+const imageInfo = document.getElementById('imageInfo');
+const logDiv = document.getElementById('log');
+const arduinoPortSelect = document.getElementById('arduinoPort');
+const refreshPortsBtn = document.getElementById('refreshPorts');
+const connectArduinoBtn = document.getElementById('connectArduino');
+
+// Settings
+let motionThreshold = 20;
+let cooldownSeconds = 10;
+let showDebug = false;
+
+// Update sensitivity display
+sensitivitySlider.addEventListener('input', (e) => {
+  motionThreshold = parseInt(e.target.value);
+  sensitivityValue.textContent = motionThreshold;
+});
+
+cooldownInput.addEventListener('input', (e) => {
+  cooldownSeconds = parseInt(e.target.value);
+});
+
+showVideoCheckbox.addEventListener('change', (e) => {
+  video.style.display = e.target.checked ? 'block' : 'none';
+});
+
+showDebugCheckbox.addEventListener('change', (e) => {
+  showDebug = e.target.checked;
+  debugSection.style.display = showDebug ? 'block' : 'none';
+});
+
+// Arduino port management
+async function loadAvailablePorts() {
+  try {
+    const response = await fetch('/api/arduino/ports');
+    const data = await response.json();
+    
+    // Clear existing options except first
+    arduinoPortSelect.innerHTML = '<option value="">No Arduino (LED disabled)</option>';
+    
+    // Add available ports
+    data.ports.forEach(port => {
+      const option = document.createElement('option');
+      option.value = port.path;
+      option.textContent = `${port.path}${port.manufacturer ? ' - ' + port.manufacturer : ''}`;
+      arduinoPortSelect.appendChild(option);
+    });
+    
+    // Select current port if connected
+    if (data.currentPort) {
+      arduinoPortSelect.value = data.currentPort;
+      log(`Arduino connected on ${data.currentPort}`);
+    }
+    
+    log(`Found ${data.ports.length} serial port(s)`);
+  } catch (error) {
+    log(`Error loading ports: ${error.message}`);
+  }
+}
+
+async function connectToArduino() {
+  const selectedPort = arduinoPortSelect.value;
+  
+  if (!selectedPort) {
+    log('No port selected - Arduino LED control disabled');
+    return;
+  }
+  
+  try {
+    const response = await fetch('/api/arduino/connect', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ port: selectedPort })
+    });
+    
+    const data = await response.json();
+    
+    if (data.success) {
+      log(`✅ Connected to Arduino on ${selectedPort}`);
+      updateStatus('Arduino connected!');
+    } else {
+      log(`❌ Failed to connect: ${data.message}`);
+      updateStatus(`Arduino connection failed: ${data.message}`, true);
+    }
+  } catch (error) {
+    log(`Error connecting to Arduino: ${error.message}`);
+    updateStatus(`Arduino error: ${error.message}`, true);
+  }
+}
+
+refreshPortsBtn.addEventListener('click', loadAvailablePorts);
+connectArduinoBtn.addEventListener('click', connectToArduino);
+
+// Logging
+function log(message) {
+  const entry = document.createElement('div');
+  entry.className = 'log-entry';
+  const timestamp = new Date().toLocaleTimeString();
+  entry.textContent = `[${timestamp}] ${message}`;
+  logDiv.insertBefore(entry, logDiv.firstChild);
+
+  // Keep only last 20 entries
+  while (logDiv.children.length > 20) {
+    logDiv.removeChild(logDiv.lastChild);
+  }
+}
+
+// Update status
+function updateStatus(message, isError = false) {
+  statusDiv.textContent = message;
+  statusDiv.style.borderColor = isError ? '#ff0000' : '#ff6600';
+  log(message);
+}
+
+// Start webcam
+async function startWebcam() {
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: {
+        width: { ideal: 640 },
+        height: { ideal: 480 }
+      }
+    });
+
+    video.srcObject = stream;
+
+    // Wait for video to be ready
+    await new Promise((resolve) => {
+      video.onloadedmetadata = () => {
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        previousCanvas.width = video.videoWidth;
+        previousCanvas.height = video.videoHeight;
+        resolve();
+      };
+    });
+
+    log('Webcam started successfully');
+    return true;
+  } catch (error) {
+    updateStatus(`Error accessing webcam: ${error.message}`, true);
+    return false;
+  }
+}
+
+// Stop webcam
+function stopWebcam() {
+  if (stream) {
+    stream.getTracks().forEach(track => track.stop());
+    stream = null;
+  }
+}
+
+// Detect motion by comparing frames
+function detectMotion() {
+  if (!video.videoWidth) return 0;
+
+  // Draw current frame
+  ctx.drawImage(video, 0, 0);
+  const currentImageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+
+  // Get previous frame
+  const previousImageData = previousCtx.getImageData(0, 0, canvas.width, canvas.height);
+
+  // Calculate difference
+  let diffCount = 0;
+  const pixelStep = 4; // Sample every 4th pixel for performance
+
+  for (let i = 0; i < currentImageData.data.length; i += pixelStep * 4) {
+    const rDiff = Math.abs(currentImageData.data[i] - previousImageData.data[i]);
+    const gDiff = Math.abs(currentImageData.data[i + 1] - previousImageData.data[i + 1]);
+    const bDiff = Math.abs(currentImageData.data[i + 2] - previousImageData.data[i + 2]);
+
+    const diff = (rDiff + gDiff + bDiff) / 3;
+
+    if (diff > 30) { // Threshold for pixel difference
+      diffCount++;
+    }
+  }
+
+  // Save current frame as previous
+  previousCtx.drawImage(video, 0, 0);
+
+  // Calculate motion percentage
+  const totalPixels = (canvas.width * canvas.height) / pixelStep;
+  const motionPercentage = (diffCount / totalPixels) * 100;
+
+  return motionPercentage;
+}
+
+// Capture image from video
+function captureImage() {
+  const captureCanvas = document.createElement('canvas');
+  captureCanvas.width = video.videoWidth;
+  captureCanvas.height = video.videoHeight;
+  const captureCtx = captureCanvas.getContext('2d');
+  captureCtx.drawImage(video, 0, 0);
+  return captureCanvas.toDataURL('image/jpeg', 0.8);
+}
+
+// Capture multiple images with delays
+async function captureMultipleImages() {
+  const images = [];
+  const numImages = 3; // Capture 3 images
+  const delayMs = 800; // 800ms between captures (total ~1.6 seconds)
+
+  log(`Capturing ${numImages} images...`);
+  
+  for (let i = 0; i < numImages; i++) {
+    const image = captureImage();
+    images.push(image);
+    log(`Captured image ${i + 1}/${numImages}`);
+    
+    // Wait before next capture (except for last image)
+    if (i < numImages - 1) {
+      await new Promise(resolve => setTimeout(resolve, delayMs));
+    }
+  }
+  
+  return images;
+}
+
+// Send greeting request
+async function sendGreeting() {
+  if (isProcessing) {
+    log('Already processing a greeting, skipping...');
+    return;
+  }
+
+  isProcessing = true;
+  updateStatus('Motion detected! Capturing images...');
+
+  try {
+    // Capture multiple images
+    const images = await captureMultipleImages();
+    
+    updateStatus('Analyzing costume...');
+
+    // Show first captured image in debug mode
+    if (showDebug) {
+      capturedImage.src = images[0];
+      capturedImage.style.display = 'block';
+
+      // Calculate total size
+      const totalSize = images.reduce((sum, img) => sum + img.length, 0);
+      const totalSizeKB = ((totalSize * 3) / 4 / 1024).toFixed(1);
+      imageInfo.textContent = `${images.length} images | Total size: ${totalSizeKB} KB | Resolution: ${video.videoWidth}x${video.videoHeight}`;
+      log(`Sending ${images.length} images (${totalSizeKB} KB total)`);
+    }
+
+    const response = await fetch('/api/greet', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ images: images })
+    });
+
+    const data = await response.json();
+
+    if (!data.success) {
+      log(data.message || 'Failed to generate greeting');
+      return;
+    }
+
+    log(`AI Response: "${data.text}"`);
+    updateStatus(`Speaking: "${data.text}"`);
+
+    // Play audio
+    const audio = new Audio('data:audio/mp3;base64,' + data.audio);
+    audio.play();
+
+    audio.onended = async () => {
+      // Notify server that audio finished (to stop LED pulse)
+      try {
+        await fetch('/api/audio-done', { method: 'POST' });
+      } catch (err) {
+        console.error('Failed to notify audio done:', err);
+      }
+      
+      if (isRunning) {
+        updateStatus('Watching for trick-or-treaters...');
+      }
+    };
+
+    audio.onerror = (error) => {
+      updateStatus('Error playing audio', true);
+      log(`Audio error: ${error}`);
+      
+      // Stop LED pulse on error too
+      fetch('/api/audio-done', { method: 'POST' }).catch(() => {});
+    };
+
+  } catch (error) {
+    updateStatus(`Error: ${error.message}`, true);
+  } finally {
+    isProcessing = false;
+  }
+}
+
+// Motion detection loop
+function checkForMotion() {
+  if (!isRunning) return;
+
+  const motion = detectMotion();
+
+  // Check if motion exceeds threshold and cooldown has passed
+  const now = Date.now();
+  const timeSinceLastMotion = (now - lastMotionTime) / 1000;
+
+  if (motion > motionThreshold && timeSinceLastMotion > cooldownSeconds && !isProcessing) {
+    log(`Motion detected: ${motion.toFixed(1)}%`);
+    lastMotionTime = now;
+
+    // Capture multiple images and send
+    sendGreeting();
+  }
+}
+
+// Start monitoring
+async function start() {
+  if (isRunning) return;
+
+  updateStatus('Starting up...');
+
+  const success = await startWebcam();
+  if (!success) return;
+
+  isRunning = true;
+  startBtn.disabled = true;
+  stopBtn.disabled = false;
+  testBtn.disabled = true;
+
+  // Start checking for motion every 500ms
+  motionCheckInterval = setInterval(checkForMotion, 500);
+
+  updateStatus('Watching for trick-or-treaters...');
+}
+
+// Stop monitoring
+function stop() {
+  if (!isRunning) return;
+
+  isRunning = false;
+  clearInterval(motionCheckInterval);
+  stopWebcam();
+
+  startBtn.disabled = false;
+  stopBtn.disabled = true;
+  testBtn.disabled = false;
+
+  updateStatus('Stopped. Click START to resume.');
+}
+
+// Test greeting with current frame
+async function testGreeting() {
+  updateStatus('Testing greeting...');
+
+  const success = await startWebcam();
+  if (!success) return;
+
+  // Wait a moment for camera to adjust
+  setTimeout(() => {
+    sendGreeting().then(() => {
+      stopWebcam();
+    });
+  }, 1000);
+}
+
+// Event listeners
+startBtn.addEventListener('click', start);
+stopBtn.addEventListener('click', stop);
+testBtn.addEventListener('click', testGreeting);
+
+// Initialize
+log('HalloWeenie initialized. Ready to spook!');
+loadAvailablePorts(); // Load available ports on startup
