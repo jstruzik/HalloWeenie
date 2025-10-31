@@ -92,6 +92,12 @@
       margin: 20px auto;
       border: 2px solid #ff6600;
       border-radius: 8px;
+      transition: filter 0.3s;
+    }
+    
+    #video.brightened {
+      /* Brighten the display for better visibility in dark conditions */
+      filter: brightness(1.5) contrast(1.2);
     }
 
     canvas {
@@ -232,6 +238,16 @@
       <div class="setting-item">
         <label>Show Video Feed:</label>
         <input type="checkbox" id="showVideo">
+      </div>
+      <div class="setting-item">
+        <label>Brighten Video Display:</label>
+        <input type="checkbox" id="brightenVideo" checked>
+        <small style="color: #ff8833; margin-left: 10px;">(Visual only, doesn't affect detection)</small>
+      </div>
+      <div class="setting-item">
+        <label>Low Light Detection Mode:</label>
+        <input type="checkbox" id="lowLightMode">
+        <small style="color: #ff8833; margin-left: 10px;">(Optimized for dark/monochrome conditions)</small>
       </div>
       <div class="setting-item">
         <label>Show Debug Info:</label>

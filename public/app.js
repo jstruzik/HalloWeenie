@@ -37,6 +37,8 @@ const brightnessSlider = document.getElementById('brightness');
 const brightnessValue = document.getElementById('brightnessValue');
 const contrastSlider = document.getElementById('contrast');
 const contrastValue = document.getElementById('contrastValue');
+const brightenVideoCheckbox = document.getElementById('brightenVideo');
+const lowLightModeCheckbox = document.getElementById('lowLightMode');
 
 // Settings
 let motionThreshold = 20;
@@ -44,6 +46,7 @@ let cooldownSeconds = 10;
 let showDebug = false;
 let imageBrightness = 40;
 let imageContrast = 30;
+let lowLightMode = false;
 
 // Update sensitivity display
 sensitivitySlider.addEventListener('input', (e) => {
@@ -74,6 +77,23 @@ brightnessSlider.addEventListener('input', (e) => {
 contrastSlider.addEventListener('input', (e) => {
   imageContrast = parseInt(e.target.value);
   contrastValue.textContent = imageContrast;
+});
+
+brightenVideoCheckbox.addEventListener('change', (e) => {
+  if (e.target.checked) {
+    video.classList.add('brightened');
+  } else {
+    video.classList.remove('brightened');
+  }
+});
+
+lowLightModeCheckbox.addEventListener('change', (e) => {
+  lowLightMode = e.target.checked;
+  if (lowLightMode) {
+    log('Low Light Mode enabled - using enhanced detection for dark conditions');
+  } else {
+    log('Low Light Mode disabled - using standard detection');
+  }
 });
 
 // Arduino port management
@@ -165,11 +185,45 @@ async function startWebcam() {
     stream = await navigator.mediaDevices.getUserMedia({
       video: {
         width: { ideal: 640 },
-        height: { ideal: 480 }
+        height: { ideal: 480 },
+        // Request camera settings optimized for low light
+        exposureMode: 'continuous',
+        whiteBalanceMode: 'continuous',
+        focusMode: 'continuous'
       }
     });
 
     video.srcObject = stream;
+    
+    // Try to apply advanced camera settings for better low-light performance
+    const videoTrack = stream.getVideoTracks()[0];
+    const capabilities = videoTrack.getCapabilities();
+    
+    try {
+      const constraints = {};
+      
+      // Increase exposure if supported
+      if (capabilities.exposureTime) {
+        constraints.exposureTime = capabilities.exposureTime.max;
+      }
+      
+      // Increase ISO/gain if supported (makes image brighter in low light)
+      if (capabilities.iso) {
+        constraints.iso = capabilities.iso.max;
+      }
+      
+      // Disable auto exposure to keep it bright
+      if (capabilities.exposureMode && capabilities.exposureMode.includes('manual')) {
+        constraints.exposureMode = 'manual';
+      }
+      
+      if (Object.keys(constraints).length > 0) {
+        await videoTrack.applyConstraints({ advanced: [constraints] });
+        log('Applied low-light camera settings');
+      }
+    } catch (err) {
+      log('Could not apply advanced camera settings (this is normal for most webcams)');
+    }
 
     // Wait for video to be ready
     await new Promise((resolve) => {
@@ -183,6 +237,12 @@ async function startWebcam() {
     });
 
     log('Webcam started successfully');
+    
+    // Apply brightness filter if checkbox is checked
+    if (brightenVideoCheckbox.checked) {
+      video.classList.add('brightened');
+    }
+    
     return true;
   } catch (error) {
     updateStatus(`Error accessing webcam: ${error.message}`, true);
@@ -198,7 +258,7 @@ function stopWebcam() {
   }
 }
 
-// Detect motion by comparing frames (optimized for low light)
+// Detect motion by comparing frames
 function detectMotion() {
   if (!video.videoWidth) return 0;
 
@@ -213,17 +273,36 @@ function detectMotion() {
   let diffCount = 0;
   const pixelStep = 4; // Sample every 4th pixel for performance
 
-  for (let i = 0; i < currentImageData.data.length; i += pixelStep * 4) {
-    const rDiff = Math.abs(currentImageData.data[i] - previousImageData.data[i]);
-    const gDiff = Math.abs(currentImageData.data[i + 1] - previousImageData.data[i + 1]);
-    const bDiff = Math.abs(currentImageData.data[i + 2] - previousImageData.data[i + 2]);
+  if (lowLightMode) {
+    // Low light mode: More sensitive, focuses on any channel change
+    for (let i = 0; i < currentImageData.data.length; i += pixelStep * 4) {
+      const rDiff = Math.abs(currentImageData.data[i] - previousImageData.data[i]);
+      const gDiff = Math.abs(currentImageData.data[i + 1] - previousImageData.data[i + 1]);
+      const bDiff = Math.abs(currentImageData.data[i + 2] - previousImageData.data[i + 2]);
 
-    // Average the differences for stable detection
-    const diff = (rDiff + gDiff + bDiff) / 3;
+      // Use max difference to catch subtle changes in any color channel
+      // Especially useful for green-tinted night vision scenarios
+      const diff = Math.max(rDiff, gDiff, bDiff);
 
-    // Reasonable threshold that works in most conditions
-    if (diff > 25) {
-      diffCount++;
+      // Lower threshold for dark/monochrome conditions
+      if (diff > 12) {
+        diffCount++;
+      }
+    }
+  } else {
+    // Standard mode: Balanced for normal lighting
+    for (let i = 0; i < currentImageData.data.length; i += pixelStep * 4) {
+      const rDiff = Math.abs(currentImageData.data[i] - previousImageData.data[i]);
+      const gDiff = Math.abs(currentImageData.data[i + 1] - previousImageData.data[i + 1]);
+      const bDiff = Math.abs(currentImageData.data[i + 2] - previousImageData.data[i + 2]);
+
+      // Average the differences for stable detection
+      const diff = (rDiff + gDiff + bDiff) / 3;
+
+      // Reasonable threshold that works in most conditions
+      if (diff > 25) {
+        diffCount++;
+      }
     }
   }
 
