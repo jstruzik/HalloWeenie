@@ -438,6 +438,10 @@ async function sendGreeting() {
         console.error('Failed to notify audio done:', err);
       }
       
+      // Release processing lock AFTER audio completes
+      isProcessing = false;
+      log('Greeting complete - ready for next visitor');
+      
       if (isRunning) {
         updateStatus('Watching for trick-or-treaters...');
       }
@@ -453,9 +457,9 @@ async function sendGreeting() {
 
   } catch (error) {
     updateStatus(`Error: ${error.message}`, true);
-  } finally {
-    isProcessing = false;
+    isProcessing = false; // Release lock on error
   }
+  // Note: isProcessing is released in audio.onended for normal flow
 }
 
 // Motion detection loop
@@ -478,12 +482,17 @@ function checkForMotion() {
     return; // Don't trigger greetings during calibration
   }
 
+  // Skip motion detection entirely while processing
+  if (isProcessing) {
+    return;
+  }
+
   // Normal operation - check if motion exceeds threshold and cooldown has passed
   const now = Date.now();
   const timeSinceLastMotion = (now - lastMotionTime) / 1000;
   
   // Motion detection with stabilization
-  if (motion > motionThreshold && timeSinceLastMotion > cooldownSeconds && !isProcessing) {
+  if (motion > motionThreshold && timeSinceLastMotion > cooldownSeconds) {
     
     // If this is new motion, start tracking it
     if (motionStartTime === 0) {
@@ -500,7 +509,7 @@ function checkForMotion() {
       motionStabilized = true;
     }
     
-  } else if (motionStabilized && motion <= motionThreshold && !isProcessing) {
+  } else if (motionStabilized && motion <= motionThreshold) {
     // Motion dropped below threshold after being stable - subject has stopped moving!
     log(`Subject stopped moving. Capturing clear images...`);
     lastMotionTime = now;
