@@ -190,13 +190,24 @@ function stopWebcam() {
   }
 }
 
-// Detect motion by comparing frames
+// Detect motion by comparing frames (optimized for low light)
 function detectMotion() {
   if (!video.videoWidth) return 0;
 
   // Draw current frame
   ctx.drawImage(video, 0, 0);
-  const currentImageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  let currentImageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  
+  // Boost brightness for motion detection in dark conditions
+  const data = currentImageData.data;
+  for (let i = 0; i < data.length; i += 4) {
+    // Amplify all channels to help detect motion in low light
+    data[i] = Math.min(255, data[i] * 1.5);     // Red
+    data[i + 1] = Math.min(255, data[i + 1] * 1.5); // Green
+    data[i + 2] = Math.min(255, data[i + 2] * 1.5); // Blue
+  }
+  ctx.putImageData(currentImageData, 0, 0);
+  currentImageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
 
   // Get previous frame
   const previousImageData = previousCtx.getImageData(0, 0, canvas.width, canvas.height);
@@ -210,9 +221,12 @@ function detectMotion() {
     const gDiff = Math.abs(currentImageData.data[i + 1] - previousImageData.data[i + 1]);
     const bDiff = Math.abs(currentImageData.data[i + 2] - previousImageData.data[i + 2]);
 
-    const diff = (rDiff + gDiff + bDiff) / 3;
+    // Use max difference instead of average for better sensitivity in low light
+    // This helps detect subtle changes in dark/monochrome conditions
+    const diff = Math.max(rDiff, gDiff, bDiff);
 
-    if (diff > 30) { // Threshold for pixel difference
+    // Lower threshold for dark conditions
+    if (diff > 15) { // Reduced from 30 to 15 for better low-light sensitivity
       diffCount++;
     }
   }
