@@ -177,10 +177,25 @@
       Click START to begin greeting trick-or-treaters!
     </div>
 
+    <div id="motionMeter" style="display: none; margin: 20px 0; padding: 15px; background: rgba(0, 0, 0, 0.5); border: 2px solid #ff6600; border-radius: 8px;">
+      <div style="margin-bottom: 10px;">
+        <span style="font-size: 1.2em;">Motion Level: </span>
+        <span id="motionValue" style="font-size: 1.5em; font-weight: bold; color: #00ff00;">0.0%</span>
+      </div>
+      <div style="background: #1a0033; height: 30px; border-radius: 5px; overflow: hidden; position: relative;">
+        <div id="motionBar" style="height: 100%; background: linear-gradient(90deg, #00ff00, #ffff00, #ff6600, #ff0000); width: 0%; transition: width 0.1s;"></div>
+        <div id="thresholdLine" style="position: absolute; top: 0; bottom: 0; width: 2px; background: white; left: 20%;"></div>
+      </div>
+      <div style="margin-top: 5px; font-size: 0.9em; color: #ff8833;">
+        White line shows your threshold. Motion above this will trigger.
+      </div>
+    </div>
+
     <div class="controls">
       <button id="startBtn">START</button>
       <button id="stopBtn" disabled>STOP</button>
       <button id="testBtn">TEST GREETING</button>
+      <button id="calibrateBtn">CALIBRATE MOTION</button>
     </div>
 
     <div class="settings">

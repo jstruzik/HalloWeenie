@@ -115,7 +115,7 @@ Look at the images (multiple shots captured a moment apart to get a clear view) 
 - Makes a fun Halloween pun or playful comment about their costume or appearance
 - Keeps the spooky Halloween spirit while being entertaining and welcoming
 
-If it's dark or you can't see much, make playful jokes about ghosts, invisibility, or mysterious visitors in the shadows.
+Only if you cannot tell what the image is, make playful jokes about ghosts, invisibility, or mysterious visitors in the shadows.
 
 Jump straight into character with your greeting - be theatrical and fun!`
       }

@@ -4,6 +4,7 @@ let isRunning = false;
 let lastMotionTime = 0;
 let isProcessing = false;
 let motionCheckInterval = null;
+let isCalibrating = false;
 
 // DOM elements
 const video = document.getElementById('video');
@@ -15,6 +16,11 @@ const statusDiv = document.getElementById('status');
 const startBtn = document.getElementById('startBtn');
 const stopBtn = document.getElementById('stopBtn');
 const testBtn = document.getElementById('testBtn');
+const calibrateBtn = document.getElementById('calibrateBtn');
+const motionMeter = document.getElementById('motionMeter');
+const motionValue = document.getElementById('motionValue');
+const motionBar = document.getElementById('motionBar');
+const thresholdLine = document.getElementById('thresholdLine');
 const sensitivitySlider = document.getElementById('sensitivity');
 const sensitivityValue = document.getElementById('sensitivityValue');
 const cooldownInput = document.getElementById('cooldown');
@@ -43,6 +49,8 @@ let imageContrast = 30;
 sensitivitySlider.addEventListener('input', (e) => {
   motionThreshold = parseInt(e.target.value);
   sensitivityValue.textContent = motionThreshold;
+  // Update threshold line position
+  thresholdLine.style.left = motionThreshold + '%';
 });
 
 cooldownInput.addEventListener('input', (e) => {
@@ -196,18 +204,7 @@ function detectMotion() {
 
   // Draw current frame
   ctx.drawImage(video, 0, 0);
-  let currentImageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-  
-  // Boost brightness for motion detection in dark conditions
-  const data = currentImageData.data;
-  for (let i = 0; i < data.length; i += 4) {
-    // Amplify all channels to help detect motion in low light
-    data[i] = Math.min(255, data[i] * 1.5);     // Red
-    data[i + 1] = Math.min(255, data[i + 1] * 1.5); // Green
-    data[i + 2] = Math.min(255, data[i + 2] * 1.5); // Blue
-  }
-  ctx.putImageData(currentImageData, 0, 0);
-  currentImageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const currentImageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
 
   // Get previous frame
   const previousImageData = previousCtx.getImageData(0, 0, canvas.width, canvas.height);
@@ -221,12 +218,11 @@ function detectMotion() {
     const gDiff = Math.abs(currentImageData.data[i + 1] - previousImageData.data[i + 1]);
     const bDiff = Math.abs(currentImageData.data[i + 2] - previousImageData.data[i + 2]);
 
-    // Use max difference instead of average for better sensitivity in low light
-    // This helps detect subtle changes in dark/monochrome conditions
-    const diff = Math.max(rDiff, gDiff, bDiff);
+    // Average the differences for stable detection
+    const diff = (rDiff + gDiff + bDiff) / 3;
 
-    // Lower threshold for dark conditions
-    if (diff > 15) { // Reduced from 30 to 15 for better low-light sensitivity
+    // Reasonable threshold that works in most conditions
+    if (diff > 25) {
       diffCount++;
     }
   }
@@ -383,11 +379,25 @@ async function sendGreeting() {
 
 // Motion detection loop
 function checkForMotion() {
-  if (!isRunning) return;
+  if (!isRunning && !isCalibrating) return;
 
   const motion = detectMotion();
 
-  // Check if motion exceeds threshold and cooldown has passed
+  // Update motion meter if calibrating
+  if (isCalibrating) {
+    motionValue.textContent = motion.toFixed(1) + '%';
+    motionBar.style.width = Math.min(100, motion) + '%';
+    
+    // Change color based on whether it would trigger
+    if (motion > motionThreshold) {
+      motionValue.style.color = '#ff0000'; // Red when above threshold
+    } else {
+      motionValue.style.color = '#00ff00'; // Green when below
+    }
+    return; // Don't trigger greetings during calibration
+  }
+
+  // Normal operation - check if motion exceeds threshold and cooldown has passed
   const now = Date.now();
   const timeSinceLastMotion = (now - lastMotionTime) / 1000;
 
@@ -450,10 +460,49 @@ async function testGreeting() {
   }, 1000);
 }
 
+// Calibrate motion detection
+async function calibrateMotion() {
+  if (isCalibrating) {
+    // Stop calibration
+    isCalibrating = false;
+    clearInterval(motionCheckInterval);
+    stopWebcam();
+    
+    motionMeter.style.display = 'none';
+    calibrateBtn.textContent = 'CALIBRATE MOTION';
+    startBtn.disabled = false;
+    testBtn.disabled = false;
+    
+    updateStatus('Calibration complete. Adjust threshold as needed.');
+    log('Calibration stopped');
+    return;
+  }
+
+  // Start calibration
+  updateStatus('Starting calibration...');
+  
+  const success = await startWebcam();
+  if (!success) return;
+
+  isCalibrating = true;
+  motionMeter.style.display = 'block';
+  thresholdLine.style.left = motionThreshold + '%';
+  calibrateBtn.textContent = 'STOP CALIBRATION';
+  startBtn.disabled = true;
+  testBtn.disabled = true;
+  
+  // Start checking for motion every 200ms for smoother updates
+  motionCheckInterval = setInterval(checkForMotion, 200);
+  
+  updateStatus('Calibrating... Move around to see motion levels. Adjust threshold slider.');
+  log('Calibration mode active - watching motion levels');
+}
+
 // Event listeners
 startBtn.addEventListener('click', start);
 stopBtn.addEventListener('click', stop);
 testBtn.addEventListener('click', testGreeting);
+calibrateBtn.addEventListener('click', calibrateMotion);
 
 // Initialize
 log('HalloWeenie initialized. Ready to spook!');
