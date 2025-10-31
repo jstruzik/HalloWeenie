@@ -27,11 +27,17 @@ const logDiv = document.getElementById('log');
 const arduinoPortSelect = document.getElementById('arduinoPort');
 const refreshPortsBtn = document.getElementById('refreshPorts');
 const connectArduinoBtn = document.getElementById('connectArduino');
+const brightnessSlider = document.getElementById('brightness');
+const brightnessValue = document.getElementById('brightnessValue');
+const contrastSlider = document.getElementById('contrast');
+const contrastValue = document.getElementById('contrastValue');
 
 // Settings
 let motionThreshold = 20;
 let cooldownSeconds = 10;
 let showDebug = false;
+let imageBrightness = 40;
+let imageContrast = 30;
 
 // Update sensitivity display
 sensitivitySlider.addEventListener('input', (e) => {
@@ -50,6 +56,16 @@ showVideoCheckbox.addEventListener('change', (e) => {
 showDebugCheckbox.addEventListener('change', (e) => {
   showDebug = e.target.checked;
   debugSection.style.display = showDebug ? 'block' : 'none';
+});
+
+brightnessSlider.addEventListener('input', (e) => {
+  imageBrightness = parseInt(e.target.value);
+  brightnessValue.textContent = imageBrightness;
+});
+
+contrastSlider.addEventListener('input', (e) => {
+  imageContrast = parseInt(e.target.value);
+  contrastValue.textContent = imageContrast;
 });
 
 // Arduino port management
@@ -211,13 +227,43 @@ function detectMotion() {
   return motionPercentage;
 }
 
-// Capture image from video
+// Capture image from video with brightness enhancement
 function captureImage() {
   const captureCanvas = document.createElement('canvas');
   captureCanvas.width = video.videoWidth;
   captureCanvas.height = video.videoHeight;
   const captureCtx = captureCanvas.getContext('2d');
+  
+  // Draw video frame
   captureCtx.drawImage(video, 0, 0);
+  
+  // Enhance brightness and contrast for low light
+  const imageData = captureCtx.getImageData(0, 0, captureCanvas.width, captureCanvas.height);
+  const data = imageData.data;
+  
+  const brightness = imageBrightness;  // Use slider value
+  const contrast = imageContrast;      // Use slider value
+  
+  const factor = (259 * (contrast + 255)) / (255 * (259 - contrast));
+  
+  for (let i = 0; i < data.length; i += 4) {
+    // Apply brightness
+    data[i] += brightness;     // Red
+    data[i + 1] += brightness; // Green
+    data[i + 2] += brightness; // Blue
+    
+    // Apply contrast
+    data[i] = factor * (data[i] - 128) + 128;
+    data[i + 1] = factor * (data[i + 1] - 128) + 128;
+    data[i + 2] = factor * (data[i + 2] - 128) + 128;
+    
+    // Clamp values to 0-255
+    data[i] = Math.max(0, Math.min(255, data[i]));
+    data[i + 1] = Math.max(0, Math.min(255, data[i + 1]));
+    data[i + 2] = Math.max(0, Math.min(255, data[i + 2]));
+  }
+  
+  captureCtx.putImageData(imageData, 0, 0);
   return captureCanvas.toDataURL('image/jpeg', 0.8);
 }
 
