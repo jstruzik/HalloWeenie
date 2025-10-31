@@ -5,6 +5,8 @@ let lastMotionTime = 0;
 let isProcessing = false;
 let motionCheckInterval = null;
 let isCalibrating = false;
+let motionStartTime = 0;
+let motionStabilized = false;
 
 // DOM elements
 const video = document.getElementById('video');
@@ -479,13 +481,43 @@ function checkForMotion() {
   // Normal operation - check if motion exceeds threshold and cooldown has passed
   const now = Date.now();
   const timeSinceLastMotion = (now - lastMotionTime) / 1000;
-
+  
+  // Motion detection with stabilization
   if (motion > motionThreshold && timeSinceLastMotion > cooldownSeconds && !isProcessing) {
-    log(`Motion detected: ${motion.toFixed(1)}%`);
+    
+    // If this is new motion, start tracking it
+    if (motionStartTime === 0) {
+      motionStartTime = now;
+      motionStabilized = false;
+      log(`Motion detected: ${motion.toFixed(1)}% - waiting for subject to settle...`);
+    }
+    
+    // Check if motion has been present for 1-2 seconds (subject is likely stopped/settled)
+    const motionDuration = (now - motionStartTime) / 1000;
+    
+    // Wait 1.5 seconds of continuous motion, then capture when motion drops (subject stopped)
+    if (motionDuration > 1.5 && !motionStabilized) {
+      motionStabilized = true;
+    }
+    
+  } else if (motionStabilized && motion <= motionThreshold && !isProcessing) {
+    // Motion dropped below threshold after being stable - subject has stopped moving!
+    log(`Subject stopped moving. Capturing clear images...`);
     lastMotionTime = now;
-
-    // Capture multiple images and send
-    sendGreeting();
+    motionStartTime = 0;
+    motionStabilized = false;
+    
+    // Wait a tiny bit more for any settling, then capture
+    setTimeout(() => {
+      sendGreeting();
+    }, 300);
+    
+  } else if (motion <= motionThreshold) {
+    // Reset if motion dropped before stabilization
+    if (motionStartTime !== 0) {
+      motionStartTime = 0;
+      motionStabilized = false;
+    }
   }
 }
 
